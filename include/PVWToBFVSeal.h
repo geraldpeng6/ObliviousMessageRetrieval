@@ -1,29 +1,39 @@
 #pragma once
 
+// 包含必要的头文件 - Include necessary header files
 #include "regevEncryption.h"
 #include "seal/seal.h"
 #include <NTL/BasicThreadPool.h>
 #include "global.h"
 using namespace seal;
 
-// takes a vector of ciphertexts, and mult them all together result in the first element of the vector
-// depth optimal using tree-shaped method
+/**
+ * 取一个密文向量，将它们全部相乘，结果存储在向量的第一个元素中
+ * Takes a vector of ciphertexts, and mult them all together result in the first element of the vector
+ * 使用树形方法的深度最优 - Depth optimal using tree-shaped method
+ * @param ciphertexts 密文向量 - Ciphertext vector
+ * @param relin_keys 重线性化密钥 - Relinearization keys
+ * @param context SEAL上下文 - SEAL context
+ * TODO多线程：可以轻松多线程化 - TODOmulti: can be multithreaded easily
+ */
 inline
-void EvalMultMany_inpace(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys, const SEALContext& context){ // TODOmulti: can be multithreaded easily
-    Evaluator evaluator(context);
-    int counter = 0;
+void EvalMultMany_inpace(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys, const SEALContext& context){
+    Evaluator evaluator(context);                       // 求值器 - Evaluator
+    int counter = 0;                                    // 计数器 - Counter
 
+    // 当密文向量大小不为1时继续 - Continue while ciphertext vector size is not 1
     while(ciphertexts.size() != 1){
-        counter += 1;
+        counter += 1;                                   // 增加计数器 - Increment counter
+        // 成对相乘 - Multiply in pairs
         for(size_t i = 0; i < ciphertexts.size()/2; i++){
             evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
-            evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
-            if(counter & 1)
-                evaluator.mod_switch_to_next_inplace(ciphertexts[i]);
+            evaluator.relinearize_inplace(ciphertexts[i], relin_keys); // 重线性化 - Relinearize
+            if(counter & 1)                             // 如果计数器为奇数 - If counter is odd
+                evaluator.mod_switch_to_next_inplace(ciphertexts[i]); // 模数切换 - Modulus switch
         }
-        if(ciphertexts.size()%2 == 0)
+        if(ciphertexts.size()%2 == 0)                   // 如果大小为偶数 - If size is even
             ciphertexts.resize(ciphertexts.size()/2);
-        else{ // if odd, take the last one and mod down to make them compatible
+        else{                                           // 如果为奇数，取最后一个并降模以使其兼容 - If odd, take the last one and mod down to make them compatible
             ciphertexts[ciphertexts.size()/2] = ciphertexts[ciphertexts.size()-1];
             if(counter & 1)
                 evaluator.mod_switch_to_next_inplace(ciphertexts[ciphertexts.size()/2]);
@@ -32,21 +42,30 @@ void EvalMultMany_inpace(vector<Ciphertext>& ciphertexts, const RelinKeys &relin
     }
 }
 
-// innersum up to toCover amount, O(log(toCover)) time
+/**
+ * 内部求和到toCover数量，O(log(toCover))时间复杂度
+ * Inner sum up to toCover amount, O(log(toCover)) time
+ * @param output 输出密文 - Output ciphertext
+ * @param gal_keys 伽罗瓦密钥 - Galois keys
+ * @param degree 多项式度数 - Polynomial degree
+ * @param toCover 要覆盖的数量 - Amount to cover
+ * @param context SEAL上下文 - SEAL context
+ */
 void innerSum_inplace(Ciphertext& output, const GaloisKeys& gal_keys, const size_t& degree,
                 const size_t& toCover, const SEALContext& context){
-    Evaluator evaluator(context);
+    Evaluator evaluator(context);                       // 求值器 - Evaluator
+    // 以2的幂次递增进行旋转求和 - Rotate and sum with powers of 2
     for(size_t i = 1; i < toCover; i*=2){
-        Ciphertext temp;
-        if(i == degree/2)
+        Ciphertext temp;                                // 临时密文 - Temporary ciphertext
+        if(i == degree/2)                               // 如果是度数的一半 - If it's half the degree
         {
-            evaluator.rotate_columns(output, gal_keys, temp);
-            evaluator.add_inplace(output, temp);
+            evaluator.rotate_columns(output, gal_keys, temp); // 列旋转 - Column rotation
+            evaluator.add_inplace(output, temp);        // 就地加法 - In-place addition
         }
         else
         {
-            evaluator.rotate_rows(output, i, gal_keys, temp);
-            evaluator.add_inplace(output, temp);
+            evaluator.rotate_rows(output, i, gal_keys, temp); // 行旋转 - Row rotation
+            evaluator.add_inplace(output, temp);        // 就地加法 - In-place addition
         }
     }
 }

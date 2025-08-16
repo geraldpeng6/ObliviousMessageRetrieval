@@ -3,6 +3,7 @@
 
 #pragma once
 
+// 包含必要的头文件 - Include necessary header files
 #include "seal/seal.h"
 #include <algorithm>
 #include <chrono>
@@ -19,34 +20,38 @@
 #include <string>
 #include <thread>
 #include <vector>
-/*
-Helper function: Prints the name of the example in a fancy banner.
-*/
+
+/**
+ * 辅助函数：以花哨的横幅打印示例名称 - Helper function: Prints the name of the example in a fancy banner.
+ * @param title 标题字符串 - Title string
+ */
 inline void print_example_banner(std::string title)
 {
-    if (!title.empty())
+    if (!title.empty())                                 // 如果标题不为空 - If title is not empty
     {
-        std::size_t title_length = title.length();
-        std::size_t banner_length = title_length + 2 * 10;
-        std::string banner_top = "+" + std::string(banner_length - 2, '-') + "+";
-        std::string banner_middle = "|" + std::string(9, ' ') + title + std::string(9, ' ') + "|";
+        std::size_t title_length = title.length();      // 获取标题长度 - Get title length
+        std::size_t banner_length = title_length + 2 * 10; // 计算横幅长度 - Calculate banner length
+        std::string banner_top = "+" + std::string(banner_length - 2, '-') + "+"; // 顶部横幅 - Top banner
+        std::string banner_middle = "|" + std::string(9, ' ') + title + std::string(9, ' ') + "|"; // 中间横幅 - Middle banner
 
+        // 打印横幅 - Print banner
         std::cout << std::endl << banner_top << std::endl << banner_middle << std::endl << banner_top << std::endl;
     }
 }
 
-/*
-Helper function: Prints the parameters in a SEALContext.
-*/
+/**
+ * 辅助函数：打印SEALContext中的参数 - Helper function: Prints the parameters in a SEALContext.
+ * @param context SEAL上下文 - SEAL context
+ */
 inline void print_parameters(const seal::SEALContext &context)
 {
-    auto &context_data = *context.key_context_data();
+    auto &context_data = *context.key_context_data();   // 获取上下文数据 - Get context data
 
-    /*
-    Which scheme are we using?
-    */
-    std::string scheme_name;
-    switch (context_data.parms().scheme())
+    /**
+     * 我们使用的是哪种方案？ - Which scheme are we using?
+     */
+    std::string scheme_name;                            // 方案名称 - Scheme name
+    switch (context_data.parms().scheme())              // 根据方案类型切换 - Switch based on scheme type
     {
     case seal::scheme_type::bfv:
         scheme_name = "BFV";

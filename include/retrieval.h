@@ -2,50 +2,72 @@
 
 #include <algorithm>
 
-// one transaction taking one bit
-void deterministicIndexRetrieval(Ciphertext& indexIndicator, const vector<Ciphertext>& SIC, const SEALContext& context, 
+/**
+ * 确定性索引检索 - Deterministic index retrieval
+ * 一个交易占用一位 - One transaction taking one bit
+ * @param indexIndicator 索引指示器 - Index indicator
+ * @param SIC SIC密文向量 - SIC ciphertext vector
+ * @param context SEAL上下文 - SEAL context
+ * @param degree 多项式度数 - Polynomial degree
+ * @param start 起始位置 - Start position
+ * @param isMulti 是否多重 - Whether multi
+ */
+void deterministicIndexRetrieval(Ciphertext& indexIndicator, const vector<Ciphertext>& SIC, const SEALContext& context,
                                     const size_t& degree, const size_t& start
-                                    , bool isMulti = false){ 
-    BatchEncoder batch_encoder(context);
-    Evaluator evaluator(context);
-    vector<uint64_t> pod_matrix(degree, 0ULL); 
+                                    , bool isMulti = false){
+    BatchEncoder batch_encoder(context);                // 批编码器 - Batch encoder
+    Evaluator evaluator(context);                       // 求值器 - Evaluator
+    vector<uint64_t> pod_matrix(degree, 0ULL);          // POD矩阵 - POD matrix
+    // 检查边界条件 - Check boundary conditions
     if(start + SIC.size() > 16*degree){
         cerr << "counter + SIC.size should be less, please check " << start << " " << SIC.size() << endl;
         return;
     }
 
+    // 遍历所有SIC - Iterate through all SIC
     for(size_t i = 0; i < SIC.size(); i++){
-        size_t idx = (i+start)/16;
-        size_t shift = (i+start) % 16;
-        pod_matrix[idx] = (1<<shift);
-        Plaintext plain_matrix;
-        batch_encoder.encode(pod_matrix, plain_matrix);
-        evaluator.transform_to_ntt_inplace(plain_matrix, SIC[i].parms_id());
-        if(i == 0 && (start%degree) == 0){
+        size_t idx = (i+start)/16;                      // 计算索引 - Calculate index
+        size_t shift = (i+start) % 16;                  // 计算位移 - Calculate shift
+        pod_matrix[idx] = (1<<shift);                   // 设置位 - Set bit
+        Plaintext plain_matrix;                         // 明文矩阵 - Plaintext matrix
+        batch_encoder.encode(pod_matrix, plain_matrix); // 编码矩阵 - Encode matrix
+        evaluator.transform_to_ntt_inplace(plain_matrix, SIC[i].parms_id()); // 转换为NTT形式 - Transform to NTT form
+        if(i == 0 && (start%degree) == 0){             // 第一个元素 - First element
             evaluator.multiply_plain(SIC[i], plain_matrix, indexIndicator);
         }
-        else{
-            Ciphertext temp;
+        else{                                           // 其他元素 - Other elements
+            Ciphertext temp;                            // 临时密文 - Temporary ciphertext
             evaluator.multiply_plain(SIC[i], plain_matrix, temp);
-            evaluator.add_inplace(indexIndicator, temp);
+            evaluator.add_inplace(indexIndicator, temp); // 累加 - Accumulate
         }
-        pod_matrix[idx] = 0ULL;
+        pod_matrix[idx] = 0ULL;                         // 重置位 - Reset bit
     }
-
 }
 
-// For randomized index retrieval
-// We first have 2 ciphertexts, as we need to represent N ~= 500,000, so sqrt(N) < 65537
-// We also need a counter
-// Each msg is randomly assigned to one slot
-// Then we repeat this process C times and gather partial information to reduce failure probability
-void randomizedIndexRetrieval(vector<vector<Ciphertext>>& indexIndicator, vector<Ciphertext>& indexCounters, vector<Ciphertext>& SIC, const SEALContext& context, 
-                                        const PublicKey& BFVpk, int counter, const size_t& degree, size_t C){ 
-    BatchEncoder batch_encoder(context);
-    Evaluator evaluator(context);
-    Encryptor encryptor(context, BFVpk);
-    vector<uint64_t> pod_matrix(degree, 0ULL);
-    srand(time(NULL));
+/**
+ * 随机化索引检索 - For randomized index retrieval
+ * 我们首先有2个密文，因为我们需要表示N ~= 500,000，所以sqrt(N) < 65537
+ * We first have 2 ciphertexts, as we need to represent N ~= 500,000, so sqrt(N) < 65537
+ * 我们还需要一个计数器 - We also need a counter
+ * 每个消息随机分配到一个槽位 - Each msg is randomly assigned to one slot
+ * 然后我们重复这个过程C次并收集部分信息以降低失败概率
+ * Then we repeat this process C times and gather partial information to reduce failure probability
+ * @param indexIndicator 索引指示器向量 - Index indicator vector
+ * @param indexCounters 索引计数器 - Index counters
+ * @param SIC SIC密文向量 - SIC ciphertext vector
+ * @param context SEAL上下文 - SEAL context
+ * @param BFVpk BFV公钥 - BFV public key
+ * @param counter 计数器 - Counter
+ * @param degree 多项式度数 - Polynomial degree
+ * @param C 重复次数 - Number of repetitions
+ */
+void randomizedIndexRetrieval(vector<vector<Ciphertext>>& indexIndicator, vector<Ciphertext>& indexCounters, vector<Ciphertext>& SIC, const SEALContext& context,
+                                        const PublicKey& BFVpk, int counter, const size_t& degree, size_t C){
+    BatchEncoder batch_encoder(context);                // 批编码器 - Batch encoder
+    Evaluator evaluator(context);                       // 求值器 - Evaluator
+    Encryptor encryptor(context, BFVpk);                // 加密器 - Encryptor
+    vector<uint64_t> pod_matrix(degree, 0ULL);          // POD矩阵 - POD matrix
+    srand(time(NULL));                                  // 设置随机种子 - Set random seed
 
     if((counter%degree) == 0){ // first msg
         indexIndicator.resize(C);

@@ -1,132 +1,195 @@
-#include "include/PVWToBFVSeal.h"
-#include "include/SealUtils.h"
-#include "include/retrieval.h"
-#include "include/client.h"
-#include "include/LoadAndSaveUtils.h"
-#include <NTL/BasicThreadPool.h>
-#include <NTL/ZZ.h>
-#include <thread>
+// 包含必要的头文件 - Include necessary header files
+#include "include/PVWToBFVSeal.h"    // PVW到BFV的转换工具 - PVW to BFV conversion utilities
+#include "include/SealUtils.h"        // SEAL库工具函数 - SEAL library utility functions
+#include "include/retrieval.h"        // 检索相关函数 - Retrieval related functions
+#include "include/client.h"           // 客户端相关函数 - Client related functions
+#include "include/LoadAndSaveUtils.h" // 数据加载和保存工具 - Data loading and saving utilities
+#include <NTL/BasicThreadPool.h>      // NTL线程池 - NTL thread pool
+#include <NTL/ZZ.h>                   // NTL大整数类型 - NTL big integer type
+#include <thread>                     // C++线程库 - C++ thread library
 
 using namespace seal;
 
-vector<vector<uint64_t>> preparinngTransactionsFormal(PVWpk& pk, 
+/**
+ * 准备交易的正式函数 - Formal function for preparing transactions
+ * @param pk PVW公钥 - PVW public key
+ * @param numOfTransactions 交易总数 - Total number of transactions
+ * @param pertinentMsgNum 相关消息数量 - Number of pertinent messages
+ * @param params PVW参数 - PVW parameters
+ * @param formultitest 是否用于多重测试 - Whether for multi-testing
+ * @return 返回预期的消息向量 - Returns expected message vectors
+ */
+vector<vector<uint64_t>> preparinngTransactionsFormal(PVWpk& pk,
                                                     int numOfTransactions, int pertinentMsgNum, const PVWParam& params, bool formultitest = false){
-    srand (time(NULL));
+    srand (time(NULL)); // 初始化随机数种子 - Initialize random seed
 
-    vector<int> msgs(numOfTransactions);
-    vector<vector<uint64_t>> ret;
-    vector<int> zeros(params.ell, 0);
+    vector<int> msgs(numOfTransactions);     // 消息标记数组 - Message marking array
+    vector<vector<uint64_t>> ret;            // 返回结果 - Return result
+    vector<int> zeros(params.ell, 0);        // 零向量 - Zero vector
 
+    // 随机选择相关消息的索引 - Randomly select indices of pertinent messages
     for(int i = 0; i < pertinentMsgNum;){
         auto temp = rand() % numOfTransactions;
-        while(msgs[temp]){
+        while(msgs[temp]){                   // 确保不重复选择 - Ensure no duplicate selection
             temp = rand() % numOfTransactions;
         }
-        msgs[temp] = 1;
+        msgs[temp] = 1;                      // 标记为相关消息 - Mark as pertinent message
         i++;
     }
 
-    cout << "Expected Message Indices: ";
+    cout << "Expected Message Indices: ";   // 输出预期的消息索引 - Output expected message indices
 
+    // 为每个交易生成线索 - Generate clues for each transaction
     for(int i = 0; i < numOfTransactions; i++){
-        PVWCiphertext tempclue;
-        if(msgs[i]){
+        PVWCiphertext tempclue;              // 临时线索密文 - Temporary clue ciphertext
+        if(msgs[i]){                         // 如果是相关消息 - If it's a pertinent message
             cout << i << " ";
-            PVWEncPK(tempclue, zeros, pk, params);
-            ret.push_back(loadDataSingle(i));
-            expectedIndices.push_back(uint64_t(i));
+            PVWEncPK(tempclue, zeros, pk, params);        // 使用公钥加密 - Encrypt with public key
+            ret.push_back(loadDataSingle(i));             // 加载单个数据 - Load single data
+            expectedIndices.push_back(uint64_t(i));       // 添加到预期索引 - Add to expected indices
         }
         else
         {
-            auto sk2 = PVWGenerateSecretKey(params);
-            PVWEncSK(tempclue, zeros, sk2, params);
+            auto sk2 = PVWGenerateSecretKey(params);       // 生成新的密钥 - Generate new secret key
+            PVWEncSK(tempclue, zeros, sk2, params);       // 使用密钥加密 - Encrypt with secret key
         }
 
-        saveClues(tempclue, i);
+        saveClues(tempclue, i);              // 保存线索 - Save clues
     }
     cout << endl;
-    return ret;
+    return ret;                              // 返回结果 - Return result
 }
 
-// Phase 1, obtaining PV's
+/**
+ * 阶段1：获取打包的SIC - Phase 1: obtaining packed SIC
+ * @param SICPVW PVW密文向量 - PVW ciphertext vector
+ * @param switchingKey 切换密钥 - Switching key
+ * @param relin_keys 重线性化密钥 - Relinearization keys
+ * @param gal_keys 伽罗瓦密钥 - Galois keys
+ * @param degree 多项式度数 - Polynomial degree
+ * @param context SEAL上下文 - SEAL context
+ * @param params PVW参数 - PVW parameters
+ * @param numOfTransactions 交易数量 - Number of transactions
+ * @return 返回打包的密文 - Returns packed ciphertext
+ */
 Ciphertext serverOperations1obtainPackedSIC(vector<PVWCiphertext>& SICPVW, vector<Ciphertext> switchingKey, const RelinKeys& relin_keys,
                             const GaloisKeys& gal_keys, const size_t& degree, const SEALContext& context, const PVWParam& params, const int numOfTransactions){
-    Evaluator evaluator(context);
-    
-    vector<Ciphertext> packedSIC(params.ell);
+    Evaluator evaluator(context);                    // 创建求值器 - Create evaluator
+
+    vector<Ciphertext> packedSIC(params.ell);        // 打包的SIC向量 - Packed SIC vector
+    // 计算B+AS的PVW优化版本 - Compute optimized PVW version of B+AS
     computeBplusASPVWOptimized(packedSIC, SICPVW, switchingKey, gal_keys, context, params);
 
-    int rangeToCheck = 850; // range check is from [-rangeToCheck, rangeToCheck-1]
+    int rangeToCheck = 850;                          // 范围检查从[-rangeToCheck, rangeToCheck-1] - Range check from [-rangeToCheck, rangeToCheck-1]
+    // 执行新的PVW范围检查 - Perform new PVW range check
     newRangeCheckPVW(packedSIC, rangeToCheck, relin_keys, degree, context, params);
 
-    return packedSIC[0];
+    return packedSIC[0];                             // 返回第一个打包的SIC - Return first packed SIC
 }
 
-// Phase 2, retrieving
+/**
+ * 阶段2：检索操作的其余部分 - Phase 2: the rest of retrieval operations
+ * @param lhs 左侧密文 - Left-hand side ciphertext
+ * @param bipartite_map 二分图映射 - Bipartite map
+ * @param rhs 右侧密文 - Right-hand side ciphertext
+ * @param packedSIC 打包的SIC - Packed SIC
+ * @param payload 载荷数据 - Payload data
+ * @param relin_keys 重线性化密钥 - Relinearization keys
+ * @param gal_keys 伽罗瓦密钥 - Galois keys
+ * @param degree 多项式度数 - Polynomial degree
+ * @param context SEAL上下文 - SEAL context
+ * @param context2 第二个SEAL上下文 - Second SEAL context
+ * @param params PVW参数 - PVW parameters
+ * @param numOfTransactions 交易数量 - Number of transactions
+ * @param counter 计数器 - Counter
+ * @param payloadSize 载荷大小 - Payload size
+ */
 void serverOperations2therest(Ciphertext& lhs, vector<vector<int>>& bipartite_map, Ciphertext& rhs,
                         Ciphertext& packedSIC, const vector<vector<uint64_t>>& payload, const RelinKeys& relin_keys, const GaloisKeys& gal_keys,
-                        const size_t& degree, const SEALContext& context, const SEALContext& context2, const PVWParam& params, const int numOfTransactions, 
+                        const size_t& degree, const SEALContext& context, const SEALContext& context2, const PVWParam& params, const int numOfTransactions,
                         int& counter, const int payloadSize = 306){
 
-    Evaluator evaluator(context);
-    int step = 32; // simply to save memory so process 32 msgs at a time
-    
+    Evaluator evaluator(context);                    // 创建求值器 - Create evaluator
+    int step = 32;                                   // 为节省内存，每次处理32条消息 - Process 32 messages at a time to save memory
+
+    // 分批处理交易 - Process transactions in batches
     for(int i = counter; i < counter+numOfTransactions; i += step){
-        vector<Ciphertext> expandedSIC;
-        // step 1. expand PV
+        vector<Ciphertext> expandedSIC;              // 扩展的SIC - Expanded SIC
+        // 步骤1：扩展PV - Step 1: expand PV
         expandSIC(expandedSIC, packedSIC, gal_keys, int(degree), context, context2, step, i-counter);
 
-        // transform to ntt form for better efficiency especially for the last two steps
+        // 转换为NTT形式以提高效率，特别是对于最后两个步骤 - Transform to NTT form for better efficiency, especially for the last two steps
         for(size_t j = 0; j < expandedSIC.size(); j++)
             if(!expandedSIC[j].is_ntt_form())
                 evaluator.transform_to_ntt_inplace(expandedSIC[j]);
 
-        // step 2. deterministic retrieval
+        // 步骤2：确定性检索 - Step 2: deterministic retrieval
         deterministicIndexRetrieval(lhs, expandedSIC, context, degree, i);
 
-        // step 3-4. multiply weights and pack them
-        // The following two steps are for streaming updates
-        vector<vector<Ciphertext>> payloadUnpacked;
+        // 步骤3-4：乘以权重并打包 - Step 3-4: multiply weights and pack them
+        // 以下两个步骤用于流式更新 - The following two steps are for streaming updates
+        vector<vector<Ciphertext>> payloadUnpacked;  // 未打包的载荷 - Unpacked payload
         payloadRetrievalOptimizedwithWeights(payloadUnpacked, payload, bipartite_map_glb, weights_glb, expandedSIC, context, degree, i, i - counter);
-        // Note that if number of repeatitions is already set, this is the only step needed for streaming updates
-        payloadPackingOptimized(rhs, payloadUnpacked, bipartite_map_glb, degree, context, gal_keys, i);   
+        // 注意：如果重复次数已设定，这是流式更新唯一需要的步骤 - Note: if number of repetitions is already set, this is the only step needed for streaming updates
+        payloadPackingOptimized(rhs, payloadUnpacked, bipartite_map_glb, degree, context, gal_keys, i);
     }
+    // 如果是NTT形式，转换回普通形式 - If in NTT form, transform back to normal form
     if(lhs.is_ntt_form())
         evaluator.transform_from_ntt_inplace(lhs);
     if(rhs.is_ntt_form())
         evaluator.transform_from_ntt_inplace(rhs);
 
-    counter += numOfTransactions;
+    counter += numOfTransactions;                    // 更新计数器 - Update counter
 }
 
-// Phase 2, retrieving for OMR3
+/**
+ * 阶段2：OMR3的检索操作 - Phase 2: retrieving for OMR3
+ * @param lhs 左侧密文向量 - Left-hand side ciphertext vector
+ * @param lhsCounter 左侧计数器 - Left-hand side counter
+ * @param bipartite_map 二分图映射 - Bipartite map
+ * @param rhs 右侧密文 - Right-hand side ciphertext
+ * @param packedSIC 打包的SIC - Packed SIC
+ * @param payload 载荷数据 - Payload data
+ * @param relin_keys 重线性化密钥 - Relinearization keys
+ * @param gal_keys 伽罗瓦密钥 - Galois keys
+ * @param public_key 公钥 - Public key
+ * @param degree 多项式度数 - Polynomial degree
+ * @param context SEAL上下文 - SEAL context
+ * @param context2 第二个SEAL上下文 - Second SEAL context
+ * @param params PVW参数 - PVW parameters
+ * @param numOfTransactions 交易数量 - Number of transactions
+ * @param counter 计数器 - Counter
+ * @param payloadSize 载荷大小 - Payload size
+ */
 void serverOperations3therest(vector<vector<Ciphertext>>& lhs, vector<Ciphertext>& lhsCounter, vector<vector<int>>& bipartite_map, Ciphertext& rhs,
                         Ciphertext& packedSIC, const vector<vector<uint64_t>>& payload, const RelinKeys& relin_keys, const GaloisKeys& gal_keys, const PublicKey& public_key,
-                        const size_t& degree, const SEALContext& context, const SEALContext& context2, const PVWParam& params, const int numOfTransactions, 
+                        const size_t& degree, const SEALContext& context, const SEALContext& context2, const PVWParam& params, const int numOfTransactions,
                         int& counter, const int payloadSize = 306){
 
-    Evaluator evaluator(context);
+    Evaluator evaluator(context);                    // 创建求值器 - Create evaluator
 
-    int step = 32;
+    int step = 32;                                   // 批处理大小 - Batch size
+    // 分批处理交易 - Process transactions in batches
     for(int i = counter; i < counter+numOfTransactions; i += step){
-        // step 1. expand PV
-        vector<Ciphertext> expandedSIC;
+        // 步骤1：扩展PV - Step 1: expand PV
+        vector<Ciphertext> expandedSIC;              // 扩展的SIC - Expanded SIC
         expandSIC(expandedSIC, packedSIC, gal_keys, int(degree), context, context2, step, i-counter);
-        // transform to ntt form for better efficiency for all of the following steps
+        // 转换为NTT形式以提高所有后续步骤的效率 - Transform to NTT form for better efficiency for all following steps
         for(size_t j = 0; j < expandedSIC.size(); j++)
             if(!expandedSIC[j].is_ntt_form())
                 evaluator.transform_to_ntt_inplace(expandedSIC[j]);
-        
-        // step 2. randomized retrieval
+
+        // 步骤2：随机化检索 - Step 2: randomized retrieval
         randomizedIndexRetrieval(lhs, lhsCounter, expandedSIC, context2, public_key, i, degree, C_glb);
-    
-        // step 3-4. multiply weights and pack them
-        // The following two steps are for streaming updates
-        vector<vector<Ciphertext>> payloadUnpacked;
+
+        // 步骤3-4：乘以权重并打包 - Step 3-4: multiply weights and pack them
+        // 以下两个步骤用于流式更新 - The following two steps are for streaming updates
+        vector<vector<Ciphertext>> payloadUnpacked;  // 未打包的载荷 - Unpacked payload
         payloadRetrievalOptimizedwithWeights(payloadUnpacked, payload, bipartite_map_glb, weights_glb, expandedSIC, context, degree, i, i-counter);
-        // Note that if number of repeatitions is already set, this is the only step needed for streaming updates
+        // 注意：如果重复次数已设定，这是流式更新唯一需要的步骤 - Note: if number of repetitions is already set, this is the only step needed for streaming updates
         payloadPackingOptimized(rhs, payloadUnpacked, bipartite_map_glb, degree, context, gal_keys, i);
     }
+    // 将所有密文从NTT形式转换回普通形式 - Transform all ciphertexts from NTT form back to normal form
     for(size_t i = 0; i < lhs.size(); i++){
             evaluator.transform_from_ntt_inplace(lhs[i][0]);
             evaluator.transform_from_ntt_inplace(lhs[i][1]);
@@ -134,162 +197,211 @@ void serverOperations3therest(vector<vector<Ciphertext>>& lhs, vector<Ciphertext
     }
     if(rhs.is_ntt_form())
         evaluator.transform_from_ntt_inplace(rhs);
-    
-    counter += numOfTransactions;
+
+    counter += numOfTransactions;                    // 更新计数器 - Update counter
 }
 
+/**
+ * 接收方解码函数 - Receiver decoding function
+ * @param lhsEnc 加密的左侧数据 - Encrypted left-hand side data
+ * @param bipartite_map 二分图映射 - Bipartite map
+ * @param rhsEnc 加密的右侧数据 - Encrypted right-hand side data
+ * @param degree 多项式度数 - Polynomial degree
+ * @param secret_key 密钥 - Secret key
+ * @param context SEAL上下文 - SEAL context
+ * @param numOfTransactions 交易数量 - Number of transactions
+ * @param seed 随机种子 - Random seed
+ * @param payloadUpperBound 载荷上界 - Payload upper bound
+ * @param payloadSize 载荷大小 - Payload size
+ * @return 返回解码后的数据 - Returns decoded data
+ */
 vector<vector<long>> receiverDecoding(Ciphertext& lhsEnc, vector<vector<int>>& bipartite_map, Ciphertext& rhsEnc,
                         const size_t& degree, const SecretKey& secret_key, const SEALContext& context, const int numOfTransactions, int seed = 3,
                         const int payloadUpperBound = 306, const int payloadSize = 306){
 
-    // 1. find pertinent indices
-    map<int, int> pertinentIndices;
+    // 1. 查找相关索引 - Find pertinent indices
+    map<int, int> pertinentIndices;              // 相关索引映射 - Pertinent indices map
     decodeIndices(pertinentIndices, lhsEnc, numOfTransactions, degree, secret_key, context);
+    // 输出找到的所有索引 - Print out all the indices found
     for (map<int, int>::iterator it = pertinentIndices.begin(); it != pertinentIndices.end(); it++)
     {
-        std::cout << it->first << " ";  // print out all the indices found
+        std::cout << it->first << " ";
     }
     cout << std::endl;
 
-    // 2. forming rhs
-    vector<vector<int>> rhs;
+    // 2. 构建右侧方程 - Forming right-hand side
+    vector<vector<int>> rhs;                     // 右侧数据 - Right-hand side data
     formRhs(rhs, rhsEnc, secret_key, degree, context, OMRtwoM);
 
-    // 3. forming lhs
-    vector<vector<int>> lhs;
+    // 3. 构建左侧方程 - Forming left-hand side
+    vector<vector<int>> lhs;                     // 左侧数据 - Left-hand side data
     formLhsWeights(lhs, pertinentIndices, bipartite_map_glb, weights_glb, 0, OMRtwoM);
 
-    // 4. solving equation
+    // 4. 求解方程 - Solving equation
     auto newrhs = equationSolving(lhs, rhs, payloadSize);
 
-    return newrhs;
+    return newrhs;                               // 返回新的右侧结果 - Return new right-hand side result
 }
 
+/**
+ * OMR3的接收方解码函数 - Receiver decoding function for OMR3
+ * @param lhsEnc 加密的左侧数据向量 - Encrypted left-hand side data vector
+ * @param lhsCounter 左侧计数器 - Left-hand side counter
+ * @param bipartite_map 二分图映射 - Bipartite map
+ * @param rhsEnc 加密的右侧数据 - Encrypted right-hand side data
+ * @param degree 多项式度数 - Polynomial degree
+ * @param secret_key 密钥 - Secret key
+ * @param context SEAL上下文 - SEAL context
+ * @param numOfTransactions 交易数量 - Number of transactions
+ * @param seed 随机种子 - Random seed
+ * @param payloadUpperBound 载荷上界 - Payload upper bound
+ * @param payloadSize 载荷大小 - Payload size
+ * @return 返回解码后的数据 - Returns decoded data
+ */
 vector<vector<long>> receiverDecodingOMR3(vector<vector<Ciphertext>>& lhsEnc, vector<Ciphertext>& lhsCounter, vector<vector<int>>& bipartite_map, Ciphertext& rhsEnc,
                         const size_t& degree, const SecretKey& secret_key, const SEALContext& context, const int numOfTransactions, int seed = 3,
                         const int payloadUpperBound = 306, const int payloadSize = 306){
-    // 1. find pertinent indices
-    map<int, int> pertinentIndices;
+    // 1. 查找相关索引 - Find pertinent indices
+    map<int, int> pertinentIndices;              // 相关索引映射 - Pertinent indices map
     decodeIndicesRandom(pertinentIndices, lhsEnc, lhsCounter, degree, secret_key, context);
+    // 输出找到的所有索引 - Print out all the indices found
     for (map<int, int>::iterator it = pertinentIndices.begin(); it != pertinentIndices.end(); it++)
     {
-        std::cout << it->first << " ";    // print out all the indices found
+        std::cout << it->first << " ";
     }
     cout << std::endl;
 
-    // 2. forming rhs
-    vector<vector<int>> rhs;
+    // 2. 构建右侧方程 - Forming right-hand side
+    vector<vector<int>> rhs;                     // 右侧方程组 - Right-hand side equations
     formRhs(rhs, rhsEnc, secret_key, degree, context, OMRthreeM);
 
-    // 3. forming lhs
-    vector<vector<int>> lhs;
+    // 3. 构建左侧方程 - Forming left-hand side
+    vector<vector<int>> lhs;                     // 左侧方程组 - Left-hand side equations
     formLhsWeights(lhs, pertinentIndices, bipartite_map_glb, weights_glb, 0, OMRthreeM);
 
-    // 4. solving equation
+    // 4. 求解方程 - Solving equation
     auto newrhs = equationSolving(lhs, rhs, payloadSize);
 
-    return newrhs;
+    return newrhs;                               // 返回新的右侧结果 - Return new right-hand side result
 }
 
-// to check whether the result is as expected
+/**
+ * 检查结果是否符合预期 - Check whether the result is as expected
+ * @param expected 预期结果 - Expected results
+ * @param res 实际结果 - Actual results
+ * @return 如果结果匹配返回true - Returns true if results match
+ */
 bool checkRes(vector<vector<uint64_t>> expected, vector<vector<long>> res){
+    // 遍历所有预期结果 - Iterate through all expected results
     for(size_t i = 0; i < expected.size(); i++){
-        bool flag = false;
+        bool flag = false;                       // 匹配标志 - Match flag
+        // 在实际结果中查找匹配项 - Search for matches in actual results
         for(size_t j = 0; j < res.size(); j++){
-            if(expected[i][0] == uint64_t(res[j][0])){
-                if(expected[i].size() != res[j].size())
+            if(expected[i][0] == uint64_t(res[j][0])){  // 如果索引匹配 - If indices match
+                if(expected[i].size() != res[j].size())  // 检查长度是否相同 - Check if lengths are the same
                 {
                     cerr << "expected and res length not the same" << endl;
                     return false;
                 }
+                // 逐个比较元素 - Compare elements one by one
                 for(size_t k = 1; k < res[j].size(); k++){
                     if(expected[i][k] != uint64_t(res[j][k]))
                         break;
-                    if(k == res[j].size() - 1){
+                    if(k == res[j].size() - 1){  // 如果所有元素都匹配 - If all elements match
                         flag = true;
                     }
                 }
             }
         }
-        if(!flag)
+        if(!flag)                                // 如果没有找到匹配项 - If no match found
             return false;
     }
-    return true;
+    return true;                                 // 所有预期结果都找到匹配项 - All expected results found matches
 }
 
-// check OMD detection key size
-// We are:
-//      1. packing PVW sk into ell ciphertexts
-//      2. using seed mode in SEAL
+/**
+ * 检查OMD检测密钥大小 - Check OMD detection key size
+ * 我们正在做：- We are:
+ *      1. 将PVW私钥打包到ell个密文中 - Packing PVW sk into ell ciphertexts
+ *      2. 在SEAL中使用种子模式 - Using seed mode in SEAL
+ */
 void OMDlevelspecificDetectKeySize(){
-    auto params = PVWParam(450, 65537, 1.3, 16000, 4); 
-    auto sk = PVWGenerateSecretKey(params);
+    auto params = PVWParam(450, 65537, 1.3, 16000, 4);  // PVW参数设置 - PVW parameter setup
+    auto sk = PVWGenerateSecretKey(params);              // 生成PVW私钥 - Generate PVW secret key
     cout << "Finishing generating sk for PVW cts\n";
-    EncryptionParameters parms(scheme_type::bfv);
-    size_t poly_modulus_degree = poly_modulus_degree_glb;
+    EncryptionParameters parms(scheme_type::bfv);        // BFV加密参数 - BFV encryption parameters
+    size_t poly_modulus_degree = poly_modulus_degree_glb; // 多项式模数度 - Polynomial modulus degree
     parms.set_poly_modulus_degree(poly_modulus_degree);
-    auto coeff_modulus = CoeffModulus::Create(poly_modulus_degree, { 28, 
-                                                                            39, 60, 60, 60, 
+    // 创建系数模数 - Create coefficient modulus
+    auto coeff_modulus = CoeffModulus::Create(poly_modulus_degree, { 28,
+                                                                            39, 60, 60, 60,
                                                                             60, 60, 60, 60, 60, 60,
                                                                             32, 30, 60 });
     parms.set_coeff_modulus(coeff_modulus);
-    parms.set_plain_modulus(65537);
+    parms.set_plain_modulus(65537);                      // 设置明文模数 - Set plain modulus
 
-	prng_seed_type seed;
+	prng_seed_type seed;                                 // 伪随机数生成器种子 - PRNG seed
     for (auto &i : seed)
     {
-        i = random_uint64();
+        i = random_uint64();                             // 生成随机种子 - Generate random seed
     }
     auto rng = make_shared<Blake2xbPRNGFactory>(Blake2xbPRNGFactory(seed));
-    parms.set_random_generator(rng);
+    parms.set_random_generator(rng);                     // 设置随机数生成器 - Set random generator
 
-    SEALContext context(parms, true, sec_level_type::none);
-    print_parameters(context); 
-    KeyGenerator keygen(context);
-    SecretKey secret_key = keygen.secret_key();
-    PublicKey public_key;
+    SEALContext context(parms, true, sec_level_type::none); // 创建SEAL上下文 - Create SEAL context
+    print_parameters(context);                           // 打印参数 - Print parameters
+    KeyGenerator keygen(context);                        // 密钥生成器 - Key generator
+    SecretKey secret_key = keygen.secret_key();          // 私钥 - Secret key
+    PublicKey public_key;                                // 公钥 - Public key
     keygen.create_public_key(public_key);
-    RelinKeys relin_keys;
-    Encryptor encryptor(context, public_key);
-    Evaluator evaluator(context);
-    Decryptor decryptor(context, secret_key);
-    BatchEncoder batch_encoder(context);
-    GaloisKeys gal_keys;
+    RelinKeys relin_keys;                                // 重线性化密钥 - Relinearization keys
+    Encryptor encryptor(context, public_key);            // 加密器 - Encryptor
+    Evaluator evaluator(context);                        // 求值器 - Evaluator
+    Decryptor decryptor(context, secret_key);            // 解密器 - Decryptor
+    BatchEncoder batch_encoder(context);                 // 批编码器 - Batch encoder
+    GaloisKeys gal_keys;                                 // 伽罗瓦密钥 - Galois keys
 
+    // 创建可序列化的密钥 - Create serializable keys
     seal::Serializable<PublicKey> pk = keygen.create_public_key();
 	seal::Serializable<RelinKeys> rlk = keygen.create_relin_keys();
-	stringstream streamPK, streamRLK, streamRTK;
-    auto reskeysize = pk.save(streamPK);
-	reskeysize += rlk.save(streamRLK);
-	reskeysize += keygen.create_galois_keys(vector<int>({1})).save(streamRTK);
+	stringstream streamPK, streamRLK, streamRTK;        // 数据流 - Data streams
+    auto reskeysize = pk.save(streamPK);                 // 保存公钥并计算大小 - Save public key and calculate size
+	reskeysize += rlk.save(streamRLK);                   // 保存重线性化密钥 - Save relinearization keys
+	reskeysize += keygen.create_galois_keys(vector<int>({1})).save(streamRTK); // 保存伽罗瓦密钥 - Save Galois keys
 
+    // 加载密钥 - Load keys
     public_key.load(context, streamPK);
     relin_keys.load(context, streamRLK);
-    gal_keys.load(context, streamRTK); 
+    gal_keys.load(context, streamRTK);
+	// 生成打包的切换密钥 - Generate packed switching keys
 	vector<seal::Serializable<Ciphertext>>  switchingKeypacked = genSwitchingKeyPVWPacked(context, poly_modulus_degree, public_key, secret_key, sk, params);
-	stringstream data_stream;
+	stringstream data_stream;                            // 数据流 - Data stream
+    // 计算切换密钥大小 - Calculate switching key size
     for(size_t i = 0; i < switchingKeypacked.size(); i++){
         reskeysize += switchingKeypacked[i].save(data_stream);
     }
-    cout << "Detection Key Size: " << reskeysize << " bytes" << endl;
+    cout << "Detection Key Size: " << reskeysize << " bytes" << endl; // 输出检测密钥大小 - Output detection key size
 }
 
-// check OMR detection key size
-// We are:
-//      1. packing PVW sk into ell ciphertexts
-//      2. use level-specific rot keys
-//      3. using seed mode in SEAL
+/**
+ * 检查OMR检测密钥大小 - Check OMR detection key size
+ * 我们正在做：- We are:
+ *      1. 将PVW私钥打包到ell个密文中 - Packing PVW sk into ell ciphertexts
+ *      2. 使用级别特定的旋转密钥 - Use level-specific rotation keys
+ *      3. 在SEAL中使用种子模式 - Using seed mode in SEAL
+ */
 void levelspecificDetectKeySize(){
-    auto params = PVWParam(450, 65537, 1.3, 16000, 4); 
-    auto sk = PVWGenerateSecretKey(params);
+    auto params = PVWParam(450, 65537, 1.3, 16000, 4);  // PVW参数设置 - PVW parameter setup
+    auto sk = PVWGenerateSecretKey(params);              // 生成PVW私钥 - Generate PVW secret key
     cout << "Finishing generating sk for PVW cts\n";
 
-    EncryptionParameters parms(scheme_type::bfv);
-    size_t poly_modulus_degree = poly_modulus_degree_glb;
-    auto degree = poly_modulus_degree;
+    EncryptionParameters parms(scheme_type::bfv);        // BFV加密参数 - BFV encryption parameters
+    size_t poly_modulus_degree = poly_modulus_degree_glb; // 多项式模数度 - Polynomial modulus degree
+    auto degree = poly_modulus_degree;                   // 度数 - Degree
     parms.set_poly_modulus_degree(poly_modulus_degree);
-    auto coeff_modulus = CoeffModulus::Create(poly_modulus_degree, { 28, 
-                                                                            39, 60, 60, 60, 60, 
+    // 创建系数模数 - Create coefficient modulus
+    auto coeff_modulus = CoeffModulus::Create(poly_modulus_degree, { 28,
+                                                                            39, 60, 60, 60, 60,
                                                                             60, 60, 60, 60, 60, 60,
                                                                             32, 30, 60 });
     parms.set_coeff_modulus(coeff_modulus);
